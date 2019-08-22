@@ -1,0 +1,4 @@
+[submodule "lib/CRoaring"]
+	path = lib/CRoaring
+	url = https://github.com/RoaringBitmap/CRoaring
+	branch = master
