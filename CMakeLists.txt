@@ -8,27 +8,28 @@ include(GoogleTest)
 
 project(bvm
     VERSION 0.0.1
+    DESCRIPTION "Book volume manager"
     LANGUAGES CXX)
+
+add_compile_definitions(
+    BVM_DESCRIPTION="${PROJECT_DESCRIPTION}"
+    BVM_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    BVM_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    BVM_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+    BVM_VERSION_TWEAK=${PROJECT_VERSION_TWEAK}
+)
 
 find_package(PkgConfig REQUIRED)
 enable_testing()
 
-if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR
-    "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-    set(warnings "-Wall -Wextra -Werror -Wpedantic")
-elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
-    set(warnings "/W4 /WX /EHsc")
+if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
+    add_compile_options(/W4 /WX /EHsc)
+else()
+    add_compile_options(-Wall -Wextra -Werror -Wpedantic)
 endif()
 
-if (NOT CONFIGURED_ONCE)
-    set(CMAKE_CXX_FLAGS "${warnings}"
-        CACHE STRING "Flags used by the compiler during all build types." FORCE)
-    set(CMAKE_C_FLAGS   "${warnings}"
-        CACHE STRING "Flags used by the compiler during all build types." FORCE)
-endif()
-
-# include lib/
-add_subdirectory(lib)
+# include third_party/
+add_subdirectory(third_party)
 
 # boost
 add_compile_definitions(BOOST_DLL_USE_STD_FS=true)
@@ -43,10 +44,10 @@ add_compile_definitions(BACKWARD_HAS_DW=1)
 
 # add the binary tree to the search path for include files
 include_directories(
-    "${PROJECT_SOURCE_DIR}/lib/include"
+    "${PROJECT_SOURCE_DIR}/third_party/include"
     "${PROJECT_SOURCE_DIR}/include"
-    "${PROJECT_SOURCE_DIR}/lib/CRoaring/cpp"
-    "${PROJECT_SOURCE_DIR}/lib/CRoaring/include"
+    "${PROJECT_SOURCE_DIR}/third_party/CRoaring/cpp"
+    "${PROJECT_SOURCE_DIR}/third_party/CRoaring/include"
 )
 
 pkg_check_modules(BVM REQUIRED devmapper spdlog fmt botan-2)
@@ -74,4 +75,16 @@ set_property(TARGET bvm PROPERTY CXX_STANDARD 17)
 target_link_libraries(bvm ${BVM_LIBRARIES})
 target_include_directories(bvm PUBLIC ${BVM_INCLUDE_DIRS})
 target_compile_options(bvm PUBLIC ${BVM_CFLAGS_OTHER})
+
+MESSAGE( STATUS "CMAKE_SYSTEM_PROCESSOR: " ${CMAKE_SYSTEM_PROCESSOR})
+MESSAGE( STATUS "CMAKE_BUILD_TYPE: " ${CMAKE_BUILD_TYPE} ) # this tends to be "sticky" so you can remain unknowingly in debug mode
+MESSAGE( STATUS "CMAKE_CXX_COMPILER: " ${CMAKE_CXX_COMPILER} ) # important to know which compiler is used
+MESSAGE( STATUS "CMAKE_CXX_FLAGS: " ${CMAKE_CXX_FLAGS} ) # important to know the flags
+MESSAGE( STATUS "CMAKE_CXX_FLAGS_DEBUG: " ${CMAKE_CXX_FLAGS_DEBUG} )
+MESSAGE( STATUS "CMAKE_CXX_FLAGS_RELEASE: " ${CMAKE_CXX_FLAGS_RELEASE} )
+MESSAGE( STATUS "BVM_DESCRIPTION:   " ${PROJECT_DESCRIPTION} )
+MESSAGE( STATUS "BVM_VERSION_MAJOR: " ${PROJECT_VERSION_MAJOR} )
+MESSAGE( STATUS "BVM_VERSION_MINOR: " ${PROJECT_VERSION_MINOR} )
+MESSAGE( STATUS "BVM_VERSION_PATCH: " ${PROJECT_VERSION_PATCH} )
+MESSAGE( STATUS "BVM_VERSION_TWEAK: " ${PROJECT_VERSION_TWEAK} )
 
