@@ -36,7 +36,11 @@ void signal_handler(int sig) {
 int main(int argc, char **argv) {
   backward::SignalHandling sh;
 
-  CLI::App app{"Book of Shadows: Volume Manager"};
+#if !defined(BVM_DESCRIPTION)
+#error "BVM_DESCRIPTION must be defined"
+#endif
+
+  CLI::App app{BVM_DESCRIPTION};
   bvm::setup_cli(app);
   app.require_subcommand(1);
 

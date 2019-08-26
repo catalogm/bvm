@@ -5,14 +5,22 @@
 #include <spdlog/spdlog.h>
 #include <atomic>
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "bvm/bvm.hh"
 #include "bvm/cli.hh"
+
+#if !(defined(BVM_VERSION_MAJOR) && defined(BVM_VERSION_MINOR) && \
+      defined(BVM_VERSION_PATCH))
+#error "BVM_VERSION_* must be defined"
+#endif
 
 using namespace fmt::literals;
 namespace fs = std::filesystem;
@@ -22,6 +30,19 @@ struct GlobalOptions {
   fs::path path;
 };
 using GlobalOptionsPtr = std::shared_ptr<GlobalOptions>;
+
+inline void register_version_command(CLI::App& app) {
+  auto callback = []() {
+    std::cout << "bvm version {}.{}.{}{}"_format(BVM_VERSION_MAJOR,
+                                                 BVM_VERSION_MINOR,
+                                                 BVM_VERSION_PATCH, "")
+              // BVM_VERSION_TWEAK ? ".{}"_format(BVM_VERSION_TWEAK) : "")
+              << std::endl;
+    std::exit(EXIT_SUCCESS);
+  };
+  app.add_flag_callback("--version,-V", std::move(callback),
+                        "Print version info and exit");
+}
 
 inline void register_init_command(CLI::App& app) {
   CLI::App* sub = app.add_subcommand("init", "Initialize a repository");
@@ -47,6 +68,7 @@ void setup_cli(CLI::App& app) {
 
   app.fallthrough();
 
+  register_version_command(app);
   register_init_command(app);
   app.require_subcommand(1);
 }
