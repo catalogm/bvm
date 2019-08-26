@@ -56,6 +56,7 @@ set(SOURCE_FILES src/bvm.cc src/cli.cc)
 set(TEST_FILES 
     tests/main.cc 
     tests/test_bvm_disk_sizes.cc
+    tests/test_bvm_slot.cc
     tests/test_bvm_slot_create.cc 
     tests/test_bvm_wipe.cc)
 

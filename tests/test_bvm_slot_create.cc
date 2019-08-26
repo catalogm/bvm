@@ -21,7 +21,10 @@ namespace fs = std::filesystem;
 using bvm::Bootstrap;
 using bvm::BVM;
 using bvm::BVMPtr;
+using bvm::iv_type;
+using bvm::key_type;
 using bvm::KeySlot;
+using bvm::salt_type;
 using bvm::Slot;
 
 class BVMSlotCreate : public ::testing::Test {
@@ -72,75 +75,6 @@ TEST_F(BVMSlotCreate, MaxSlots) {
   ASSERT_THROW({ vm->createSlot(""); }, std::runtime_error);
 }
 
-TEST_F(BVMSlotCreate, SlotObjectAllocate) {
-  auto iv = Slot::iv_type();
-  auto key = Slot::key_type(32, 2);
-  auto salt = Slot::salt_type(32, 1);
-  Slot(3, salt, key);
-  Slot(3, salt, key, {"AES-256/XTS"});
-  Slot(3, salt, key, {"Twofish/XTS", "AES-256/XTS"});
-  Slot(3, salt, key, {"Twofish/XTS", "AES-256/XTS", "Serpent/XTS"});
-
-  ASSERT_THROW({ Slot(3, salt, key, {"Invalid"}); }, std::runtime_error);
-  ASSERT_THROW(
-      {
-        Slot(3, salt, key, {"AES-256/XTS", "Invalid"});
-      },
-      std::runtime_error);
-
-  // size greater than 0
-  ASSERT_THROW({ Slot(3, salt, key, {}); }, std::runtime_error);
-  // size less than 3
-  ASSERT_THROW(
-      {
-        Slot(3, salt, key,
-             {"AES-256/XTS", "Twofish/XTS", "Serpent/XTS", "AES-256/XTS"});
-      },
-      std::runtime_error);
-}
-
-TEST_F(BVMSlotCreate, EncryptDecrypt) {
-  auto rng = std::make_unique<Botan::AutoSeeded_RNG>();
-  auto iv = rng->random_vec(sizeof(KeySlot::iv));
-  auto siv = Botan::secure_vector<uint8_t>(iv.begin(), iv.begin() + 16);
-  auto key = Slot::key_type(64, 2);
-  auto ctext = Botan::secure_vector<uint8_t>(16 * 10, 0);
-  auto orig = ctext;
-  std::string alg = "AES-256/XTS";
-
-  auto expected = orig;
-  // encrypt expected
-  {
-    auto enc = Botan::Cipher_Mode::create(alg, Botan::ENCRYPTION);
-    enc->set_key(key);
-    enc->start(siv);
-    enc->finish(expected);
-    ASSERT_NE(expected, orig);
-  }
-
-  {
-    Slot::encrypt(alg, key, siv, ctext);
-    ASSERT_NE(ctext, orig);
-    ASSERT_EQ(ctext, expected);
-  }
-
-  // decrypt expected
-  {
-    auto enc = Botan::Cipher_Mode::create(alg, Botan::DECRYPTION);
-    enc->set_key(key);
-    enc->start(siv);
-    enc->finish(expected);
-    ASSERT_EQ(expected, orig);
-    ASSERT_NE(expected, ctext);
-  }
-
-  {
-    Slot::decrypt(alg, key, siv, ctext);
-    ASSERT_EQ(ctext, orig);
-    ASSERT_EQ(ctext, expected);
-  }
-}
-
 TEST_F(BVMSlotCreate, CreateAndWrite) {
   BVMPtr vm = std::make_shared<BVM>(fname);
   ASSERT_NE(vm, nullptr);
@@ -178,8 +112,33 @@ TEST_F(BVMSlotCreate, CreateAndWrite) {
   ASSERT_EQ(memcmp(&b, &exp, sizeof exp), 0);
 }
 
-TEST_F(BVMSlotCreate, SetAlgorithm) {
+TEST_F(BVMSlotCreate, UnlockSlot) {
   BVMPtr vm = std::make_shared<BVM>(fname);
   ASSERT_NE(vm, nullptr);
   ASSERT_EQ(vm->slots_size(), 0);
+
+  // create slot
+  std::string passphrase = "hello wurl";
+  auto slot = vm->createSlot(passphrase);
+  auto slotn = slot->slotn();
+  ASSERT_LT(slotn, BVM::MAX_SLOTS);
+  ASSERT_EQ(vm->slots_size(), 1);
+
+  // write slot
+  ASSERT_TRUE(vm->writeSlot(slotn));
+
+  // unlock should return nullptr if slot already open
+  ASSERT_EQ(vm->unlockSlot(passphrase), nullptr);
+
+  // close slot
+  ASSERT_EQ(vm->slots_size(), 1);
+  vm->closeSlot(slotn);
+  ASSERT_EQ(vm->slots_size(), 0);
+
+  // unlock slot
+  auto us = vm->unlockSlot(passphrase);
+  ASSERT_NE(us, nullptr);
+  ASSERT_EQ(slotn, us->slotn());
+  ASSERT_EQ(vm->slots_size(), 1);
 }
+
