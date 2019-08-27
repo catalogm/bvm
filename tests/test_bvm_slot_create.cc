@@ -18,6 +18,7 @@
 #include "bvm/bvm.hh"
 
 namespace fs = std::filesystem;
+using bvm::algorithms_type;
 using bvm::Bootstrap;
 using bvm::BVM;
 using bvm::BVMPtr;
@@ -52,7 +53,7 @@ class BVMSlotCreate : public ::testing::Test {
   void TearDown() override { fs::remove(fname); }
 
   static fs::path fname;
-  constexpr static size_t size = (1024 * 1024 * 1024) * 3ull / 2ull;
+  constexpr static size_t size = (1024 * 1024 * 1024) * 3ull / 2ull;  // 1.5gb
 };
 
 fs::path BVMSlotCreate::fname = "";
@@ -117,12 +118,36 @@ TEST_F(BVMSlotCreate, UnlockSlot) {
   ASSERT_NE(vm, nullptr);
   ASSERT_EQ(vm->slots_size(), 0);
 
+  // test sizes
+  ASSERT_EQ(vm->size(), size);
+  ASSERT_EQ(vm->bootstrap_size(), sizeof(bvm::Bootstrap));
+  ASSERT_EQ(vm->data_size(), size - sizeof(bvm::Bootstrap));
+  ASSERT_EQ(vm->extents_total(), vm->data_size() / BVM::EXTENT_SIZE);
+  ASSERT_EQ(vm->extents_free(), vm->extents_total());
+  ASSERT_EQ(vm->extents_used(), 0);
+
   // create slot
   std::string passphrase = "hello wurl";
   auto slot = vm->createSlot(passphrase);
   auto slotn = slot->slotn();
   ASSERT_LT(slotn, BVM::MAX_SLOTS);
   ASSERT_EQ(vm->slots_size(), 1);
+
+  // add volume
+  auto algs = algorithms_type{"aes-xts-plain64", "twofish-xts-plain64"};
+  vm->addVolume(slotn, 1, algs);
+  auto vkey = slot->volumes()[0].key;
+
+  ASSERT_EQ(vm->extents_free(), vm->extents_total() - 1);
+  ASSERT_EQ(vm->extents_used(), 1);
+  ASSERT_EQ(slot->volumes().size(), 1);
+  ASSERT_EQ(slot->volumes()[0].extent_size, BVM::EXTENT_SIZE);
+  ASSERT_EQ(slot->volumes()[0].extents.size(), 1);
+  ASSERT_EQ(slot->volumes()[0].algorithms, algs);
+  {
+    size_t ksize = 192;
+    ASSERT_EQ(vkey.size(), ksize);
+  }
 
   // write slot
   ASSERT_TRUE(vm->writeSlot(slotn));
@@ -134,11 +159,51 @@ TEST_F(BVMSlotCreate, UnlockSlot) {
   ASSERT_EQ(vm->slots_size(), 1);
   vm->closeSlot(slotn);
   ASSERT_EQ(vm->slots_size(), 0);
+  ASSERT_EQ(vm->extents_free(), vm->extents_total());
+  ASSERT_EQ(vm->extents_used(), 0);
+
+  // unlock using key (derived from passphrase)
+  {
+    auto us = vm->unlockSlot(slot->key());
+    ASSERT_NE(us, nullptr);
+    ASSERT_EQ(slotn, us->slotn());
+    ASSERT_EQ(vm->slots_size(), 1);
+  }
+
+  // close slot
+  vm->closeSlot(slotn);
+  ASSERT_EQ(vm->slots_size(), 0);
+  ASSERT_EQ(vm->extents_used(), 0);
 
   // unlock slot
   auto us = vm->unlockSlot(passphrase);
   ASSERT_NE(us, nullptr);
   ASSERT_EQ(slotn, us->slotn());
   ASSERT_EQ(vm->slots_size(), 1);
+
+  // check volumes
+  ASSERT_EQ(vm->extents_free(), vm->extents_total() - 1);
+  ASSERT_EQ(vm->extents_used(), 1);
+  ASSERT_EQ(us->volumes().size(), 1);
+  {
+    auto &vol = us->volumes()[0];
+    ASSERT_EQ(vol.extent_size, BVM::EXTENT_SIZE);
+    ASSERT_EQ(vol.extents.size(), 1);
+    ASSERT_EQ(vol.extents, slot->volumes()[0].extents);
+    ASSERT_EQ(vol.algorithms, algs);
+    ASSERT_EQ(vol.key, vkey);
+  }
+
+  std::cout
+      << fmt::format(
+             "concise format:\n----------------------\n{}\n------------------",
+             vm->conciseDeviceMapper(slotn, 0, "bvm"))
+      << std::endl;
+
+  // remove volume
+  vm->removeVolume(slotn, 0);
+  ASSERT_EQ(vm->extents_free(), vm->extents_total());
+  ASSERT_EQ(vm->extents_used(), 0);
+  ASSERT_EQ(us->volumes().size(), 0);
 }
 

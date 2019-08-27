@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <exception>
 #include <iterator>
+#include <sstream>
 #include <type_traits>
 
 #include "hedley/hedley.h"
@@ -60,7 +61,10 @@ void bvm::from_json(const json& j, SlotMeta& meta) {
   meta.volumes = j["volumes"].get<decltype(meta.volumes)>();
 }
 
-BVM::BVM(fs::path path) : path_{path}, fp_{}, size_{}, slots_{} {
+BVM::BVM(fs::path path) : path_{path}, fp_{}, size_{}, slots_{}, bitmap_{} {
+  if (path_.string().find_first_of(" ") != std::string::npos) {
+    throw std::runtime_error("path must not contain spaces");
+  }
   fp_.open(path, std::ios::binary | std::ios::in | std::ios::out);
   fp_.seekg(0, std::ios::end);
   size_ = fp_.tellg();
@@ -153,7 +157,15 @@ SlotPtr BVM::createSlot(const salt_type& salt, const key_type& key,
   return slot;
 }
 
-void BVM::closeSlot(uint8_t slotn) { slots_.erase(slotn); }
+void BVM::closeSlot(uint8_t slotn) {
+  auto slot = slots_.at(slotn);
+  for (auto& vol : slot->volumes()) {
+    for (auto& extn : vol.extents) {
+      bitmap_.remove(extn);
+    }
+  }
+  slots_.erase(slotn);
+}
 
 SlotPtr BVM::unlockSlot(const std::string& passphrase) {
   if (slots_.size() >= MAX_SLOTS) {
@@ -170,6 +182,39 @@ SlotPtr BVM::unlockSlot(const std::string& passphrase) {
     }
 
     auto slot = Slot::deserialize(slotn, passphrase, bootstrap->slots[slotn]);
+    if (slot != nullptr) {
+      // add extents to bitmap
+      for (auto& vol : slot->volumes()) {
+        for (auto& extn : vol.extents) {
+          if (!bitmap_.addChecked(extn)) {
+            throw std::runtime_error("Bitmap for slot already exists");
+          }
+        }
+      }
+      slots_[slotn] = slot;
+      return slot;
+    }
+  }
+
+  // failed to unlock
+  return nullptr;
+}
+
+SlotPtr BVM::unlockSlot(const key_type& key) {
+  if (slots_.size() >= MAX_SLOTS) {
+    throw std::runtime_error("no more slots available in bootstrap");
+  } else if (key.empty()) {
+    throw std::runtime_error("key must not be empty");
+  }
+
+  auto bootstrap = readBootstrap();
+  for (uint8_t slotn = 0; slotn < MAX_SLOTS; slotn++) {
+    // already unlocked, skip
+    if (slots_.find(slotn) != slots_.end()) {
+      continue;
+    }
+
+    auto slot = Slot::deserialize(slotn, key, bootstrap->slots[slotn]);
     if (slot != nullptr) {
       slots_[slotn] = slot;
       return slot;
@@ -197,6 +242,136 @@ bool BVM::writeSlot(uint8_t slotn) {
   return true;
 }
 
+uint64_t BVM::getRandomExtent(Botan::AutoSeeded_RNG& rng) {
+  // get offset
+  uint64_t offset = 0;
+  {
+    auto avail = extents_free();
+    do {
+      rng.randomize(reinterpret_cast<uint8_t*>(&offset), sizeof(offset));
+    } while (offset >= (UINT64_MAX - UINT64_MAX % avail));
+    offset = offset % avail;
+  }
+
+  auto total = extents_total();
+  size_t skipped = 0;
+  for (uint64_t extn = 0; extn < total; extn++) {
+    if (bitmap_.contains(extn)) {
+      continue;
+    } else if (skipped < offset) {
+      skipped++;
+      continue;
+    }
+    return extn;
+  }
+
+  throw std::runtime_error("Failed to get random extent");
+}
+
+void BVM::addVolume(uint8_t slotn, size_t nextents,
+                    algorithms_type algorithms) {
+  if (algorithms.size() < 1) {
+    throw std::runtime_error("algorithms size must be greater than 1");
+  } else if (extents_free() < nextents) {
+    throw std::runtime_error(
+        "Not enough free extents ({}) for volume of size {}."_format(
+            extents_free(), nextents));
+  }
+
+  auto& slot = slots_.at(slotn);
+
+  VolumeMeta vm;
+  vm.algorithms = std::move(algorithms);
+  auto ksize = 192;
+
+  auto rng = std::make_unique<Botan::AutoSeeded_RNG>();
+  vm.key = rng->random_vec(ksize);
+  vm.extent_size = extent_size();
+
+  // allocate extents
+  vm.extents.reserve(nextents);
+  for (uint64_t i = 0; i < nextents; i++) {
+    auto extn = getRandomExtent(*rng);
+    bitmap_.add(extn);
+    vm.extents.push_back(extn);
+  }
+
+  slot->addVolume(std::move(vm));
+}
+
+void BVM::removeVolume(uint8_t slotn, uint64_t volumen) {
+  auto& slot = slots_.at(slotn);
+  auto& volumes = slot->volumes();
+  if (volumen > volumes.size()) {
+    throw std::runtime_error(fmt::format(
+        "Volumen number({}) is greater than number of volumes({}) in slot({})",
+        volumen, volumes.size(), slotn));
+  }
+  auto& vol = volumes[volumen];
+  for (auto& extn : vol.extents) {
+    bitmap_.remove(extn);
+  }
+  slot->removeVolume(volumen);
+}
+
+std::string BVM::conciseDeviceMapper(uint8_t slotn, uint64_t volumen,
+                                     const std::string& name, bool rw) {
+  // device mapper sector size, 512 bytes
+  static constexpr size_t sector_size = 512;
+  static_assert((EXTENT_SIZE % sector_size) == 0,
+                "EXTENT_SIZE must be divisible by sector size of 512");
+
+  const auto& slot = slots_.at(slotn);
+  const auto& vol = slot->volumes().at(volumen);
+  const auto& algs = vol.algorithms;
+  const auto& extents = vol.extents;
+  const auto flags = rw ? "rw" : "ro";
+
+  if (extents.size() < 1) {
+    throw std::runtime_error("Volume must have at least 1 extent");
+  }
+
+  std::ostringstream buf;
+
+  // create linear target
+  std::string dev_name = fmt::format("bvm_linear_{}", name);
+  buf << fmt::format("{},,,{}", dev_name, flags);
+  auto sectors = vol.extent_size / sector_size;
+  size_t start = 0;
+  for (auto& extn : extents) {
+    // offset within original file
+    auto offset = bootstrap_size() + ((extn * vol.extent_size) / sector_size);
+
+    // create table
+    buf << fmt::format(",{start} {sectors} linear {path} {offset}",
+                       "start"_a = start, "sectors"_a = sectors,
+                       "path"_a = path_.string(), "offset"_a = offset);
+    start += sectors;
+  }
+
+  // create encryption tables
+  auto total_sectors = start;
+  auto last = algs.cend() - 1;
+  auto count = 1;
+  for (auto it = algs.cbegin(); it != algs.cend(); it++) {
+    auto prev_dev_path = fmt::format("/dev/mapper/{}", dev_name);
+    auto key = "";
+    if (it != last) {
+      dev_name = fmt::format("bvm_crypt_{0}_{1}", name, count);
+      count++;
+    } else {
+      // last encryption as final table
+      dev_name = name;
+    }
+    buf << fmt::format(
+        ";{dev_name},,,{flags},0 {sectors} crypt {alg} {key} 0 {dev} 0",
+        "dev_name"_a = dev_name, "flags"_a = flags, "sectors"_a = total_sectors,
+        "alg"_a = *it, "key"_a = key, "dev"_a = prev_dev_path);
+  }
+
+  return buf.str();
+}
+
 Slot::Slot(uint8_t slotn, const salt_type& salt, const key_type& key,
            const algorithms_type& algorithms, SlotMeta meta)
     : slotn_{slotn},
@@ -216,6 +391,14 @@ Slot::Slot(uint8_t slotn, const std::string& passphrase,
     : Slot(slotn, salt_type(), key_type(), algorithms) {
   setSalt();
   key_ = deriveKey(passphrase, salt_);
+}
+
+void Slot::addVolume(VolumeMeta volume) {
+  meta_.volumes.push_back(std::move(volume));
+}
+
+void Slot::removeVolume(uint64_t volumen) {
+  meta_.volumes.erase(meta_.volumes.begin() + volumen);
 }
 
 SlotPtr Slot::deserialize(uint8_t slotn, const std::string& passphrase,
