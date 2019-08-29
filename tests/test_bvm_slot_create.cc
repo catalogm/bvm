@@ -25,6 +25,7 @@ using bvm::BVMPtr;
 using bvm::iv_type;
 using bvm::key_type;
 using bvm::KeySlot;
+using bvm::Layer;
 using bvm::salt_type;
 using bvm::Slot;
 
@@ -134,20 +135,21 @@ TEST_F(BVMSlotCreate, UnlockSlot) {
   ASSERT_EQ(vm->slots_size(), 1);
 
   // add volume
-  auto algs = algorithms_type{"aes-xts-plain64", "twofish-xts-plain64"};
-  vm->addVolume(slotn, 1, algs);
-  auto vkey = slot->volumes()[0].key;
+  Botan::AutoSeeded_RNG rng;
+  vm->addVolume(slotn, 1,
+                {{"aes-xts-plain64", rng.random_vec(512 / 8)},
+                 {"twofish-xts-plain64", rng.random_vec(512 / 8)}});
 
   ASSERT_EQ(vm->extents_free(), vm->extents_total() - 1);
   ASSERT_EQ(vm->extents_used(), 1);
   ASSERT_EQ(slot->volumes().size(), 1);
   ASSERT_EQ(slot->volumes()[0].extent_size, BVM::EXTENT_SIZE);
   ASSERT_EQ(slot->volumes()[0].extents.size(), 1);
-  ASSERT_EQ(slot->volumes()[0].algorithms, algs);
-  {
-    size_t ksize = 192;
-    ASSERT_EQ(vkey.size(), ksize);
-  }
+  ASSERT_EQ(slot->volumes()[0].layers.size(), 2);
+  ASSERT_EQ(slot->volumes()[0].layers[0].cipher, "aes-xts-plain64");
+  ASSERT_EQ(slot->volumes()[0].layers[0].key.size(), 512 / 8);
+  ASSERT_EQ(slot->volumes()[0].layers[1].cipher, "twofish-xts-plain64");
+  ASSERT_EQ(slot->volumes()[0].layers[1].key.size(), 512 / 8);
 
   // write slot
   ASSERT_TRUE(vm->writeSlot(slotn));
@@ -190,15 +192,17 @@ TEST_F(BVMSlotCreate, UnlockSlot) {
     ASSERT_EQ(vol.extent_size, BVM::EXTENT_SIZE);
     ASSERT_EQ(vol.extents.size(), 1);
     ASSERT_EQ(vol.extents, slot->volumes()[0].extents);
-    ASSERT_EQ(vol.algorithms, algs);
-    ASSERT_EQ(vol.key, vkey);
+    ASSERT_EQ(vol.layers[0].cipher, "aes-xts-plain64");
+    ASSERT_EQ(vol.layers[0].key.size(), 512 / 8);
+    ASSERT_EQ(vol.layers[1].cipher, "twofish-xts-plain64");
+    ASSERT_EQ(vol.layers[1].key.size(), 512 / 8);
   }
 
-  std::cout
-      << fmt::format(
-             "concise format:\n----------------------\n{}\n------------------",
-             vm->conciseDeviceMapper(slotn, 0, "bvm"))
-      << std::endl;
+  std::cout << fmt::format(
+                   "concise "
+                   "format:\n----------------------\n{}\n------------------",
+                   vm->conciseDeviceMapper(slotn, 0, "bvm"))
+            << std::endl;
 
   // remove volume
   vm->removeVolume(slotn, 0);

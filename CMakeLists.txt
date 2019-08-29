@@ -53,7 +53,7 @@ include_directories(
 pkg_check_modules(BVM REQUIRED devmapper spdlog fmt botan-2)
 
 set(BVM_LIBRARIES ${BVM_LIBRARIES} stdc++fs dw dl pthread roaring)
-set(SOURCE_FILES src/bvm.cc src/cli.cc)
+set(SOURCE_FILES src/disk.cc src/slot.cc src/bvm.cc src/cli.cc)
 set(TEST_FILES 
     tests/main.cc 
     tests/test_bvm_disk_sizes.cc

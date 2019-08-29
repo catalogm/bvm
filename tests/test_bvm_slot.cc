@@ -78,9 +78,8 @@ TEST(BVMSlot, SerializeAndDeserialize) {
   Slot slot(3, salt, key);
   slot.serialize(*sks);
 
-  auto meta = slot.meta();
-  ASSERT_EQ(meta.version, BVM_DISK_FORMAT_VERSION);
-  ASSERT_EQ(meta.volumes.size(), 0);
+  auto& volumes = slot.volumes();
+  ASSERT_EQ(volumes.size(), 0);
 
   ASSERT_EQ(sizeof sks->salt, salt.size());
   ASSERT_EQ(memcmp(sks->salt, salt.data(), salt.size()), 0);
@@ -95,9 +94,8 @@ TEST(BVMSlot, SerializeAndDeserialize) {
   auto ds = Slot::deserialize(5, key, *dks);
   ASSERT_NE(ds, nullptr);
 
-  auto dsm = ds->meta();
-  ASSERT_EQ(dsm.version, 0);
-  ASSERT_EQ(dsm.volumes.size(), 0);
+  auto& dvols = ds->volumes();
+  ASSERT_EQ(dvols.size(), 0);
 }
 
 TEST(BVMSlot, ObjectAllocate) {
@@ -116,9 +114,8 @@ TEST(BVMSlot, ObjectAllocate) {
     ASSERT_EQ(slot.key(), key);
     ASSERT_EQ(slot.salt(), salt);
 
-    auto& meta = slot.meta();
-    ASSERT_EQ(meta.version, BVM_DISK_FORMAT_VERSION);
-    ASSERT_EQ(meta.volumes.size(), 0);
+    auto& volumes = slot.volumes();
+    ASSERT_EQ(volumes.size(), 0);
   }
 
   ASSERT_THROW({ Slot(3, salt, key, {"Invalid"}); }, std::runtime_error);
