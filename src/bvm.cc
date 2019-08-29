@@ -3,9 +3,6 @@
 #include "bvm/bvm.hh"
 
 #include <botan/auto_rng.h>
-#include <botan/cipher_mode.h>
-#include <botan/hash.h>
-#include <botan/pwdhash.h>
 #include <algorithm>
 #include <exception>
 #include <iterator>
@@ -56,10 +53,10 @@ void BVM::writeBootstrap(const Bootstrap& bs) {
 bool BVM::wipe(bool magic) { return wipeBootstrap(magic) && wipeData(); }
 
 bool BVM::wipeBootstrap(bool magic) {
-  auto rng = std::make_unique<Botan::AutoSeeded_RNG>();
+  Botan::AutoSeeded_RNG rng;
   auto bstrap = std::make_unique<Bootstrap>();
   Bootstrap& b = *bstrap;
-  rng->randomize(reinterpret_cast<uint8_t*>(&b), sizeof(b));
+  rng.randomize(reinterpret_cast<uint8_t*>(&b), sizeof(b));
 
   if (magic) {
     memset(b.magic, 0, sizeof(b.magic));
@@ -71,7 +68,7 @@ bool BVM::wipeBootstrap(bool magic) {
 }
 
 bool BVM::wipeData(uint64_t blocksize) {
-  auto rng = std::make_unique<Botan::AutoSeeded_RNG>();
+  Botan::AutoSeeded_RNG rng;
   uint64_t s = size();
   std::vector<uint8_t> buf(blocksize, 0);
 
@@ -80,7 +77,7 @@ bool BVM::wipeData(uint64_t blocksize) {
   while (written < s) {
     uint64_t left = s - written;
     uint64_t bs = left > blocksize ? blocksize : left;
-    rng->randomize(buf.data(), bs);
+    rng.randomize(buf.data(), bs);
     fp_.write(reinterpret_cast<char*>(buf.data()), bs);
     written += bs;
   }
@@ -92,8 +89,8 @@ uint8_t BVM::getFreeSlot() {
   if (slots_.size() >= MAX_SLOTS) {
     throw std::runtime_error("no more slots available in bootstrap");
   }
-  auto rng = std::make_unique<Botan::AutoSeeded_RNG>();
-  uint8_t slotn = rng->next_byte() % (MAX_SLOTS - slots_.size());
+  Botan::AutoSeeded_RNG rng;
+  uint8_t slotn = rng.next_byte() % (MAX_SLOTS - slots_.size());
   while (slots_.find(slotn) != slots_.end()) {
     slotn++;
   }

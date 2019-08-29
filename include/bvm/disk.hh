@@ -7,7 +7,7 @@
 namespace bvm {
 
 #define BVM_DISK_FORMAT_VERSION 0
-#define BVM_DISK_MAX_SLOTS 16
+#define BVM_DISK_MAX_SLOTS 8
 
 #pragma pack(push, 1)
 struct KeySlotPayload {
@@ -15,8 +15,7 @@ struct KeySlotPayload {
   struct {
     uint32_t meta_size;
     uint8_t meta[1024 * 1024];  // cbor data
-    uint8_t _reserved1[16];
-    uint8_t _reserved2[124];
+    uint8_t _reserved[380];
   } data;
   /*
   {

@@ -221,7 +221,10 @@ void Slot::setIV(size_t size) {
 key_type Slot::deriveKey(const std::string& passphrase, const salt_type& salt,
                          size_t size) {
   auto argon = Botan::PasswordHashFamily::create("Argon2id");
-  auto kdf = argon->default_params();
+  constexpr size_t mem = 256 * 1024;  // in kilobytes
+  constexpr size_t iter = 16;
+  constexpr size_t para = 8;
+  auto kdf = argon->from_params(mem, iter, para);
   auto key = key_type(size, 0);
   kdf->derive_key(key.data(), key.size(), passphrase.c_str(),
                   passphrase.length(), salt.data(), salt.size());
