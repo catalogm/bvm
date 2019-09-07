@@ -82,7 +82,7 @@ TEST_F(BVMSlotCreate, CreateAndWrite) {
   ASSERT_NE(vm, nullptr);
   ASSERT_EQ(vm->slots_size(), 0);
 
-  ASSERT_EQ(sizeof(bvm::KeySlotPayload), 1048752);
+  ASSERT_EQ(sizeof(bvm::KeySlotPayload), 1048992);
   ASSERT_EQ(sizeof(bvm::KeySlotPayload) % 16, 0);
 
   // create slot
