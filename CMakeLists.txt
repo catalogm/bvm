@@ -48,11 +48,12 @@ include_directories(
     "${PROJECT_SOURCE_DIR}/include"
     "${PROJECT_SOURCE_DIR}/third_party/CRoaring/cpp"
     "${PROJECT_SOURCE_DIR}/third_party/CRoaring/include"
+    "${PROJECT_SOURCE_DIR}/third_party/replxx/include"
 )
 
 pkg_check_modules(BVM REQUIRED devmapper spdlog fmt botan-2)
 
-set(BVM_LIBRARIES ${BVM_LIBRARIES} stdc++fs dw dl pthread roaring)
+set(BVM_LIBRARIES ${BVM_LIBRARIES} stdc++fs dw dl pthread roaring replxx-static)
 set(SOURCE_FILES src/disk.cc src/slot.cc src/bvm.cc src/cli.cc)
 set(TEST_FILES 
     tests/main.cc 
@@ -63,7 +64,7 @@ set(TEST_FILES
 
 # Tests
 add_executable(test_bvm ${SOURCE_FILES} ${TEST_FILES})
-set_property(TARGET test_bvm PROPERTY CXX_STANDARD 17)
+set_property(TARGET test_bvm PROPERTY CXX_STANDARD 20)
 target_link_libraries(test_bvm gtest ${BVM_LIBRARIES})
 target_include_directories(test_bvm PUBLIC ${BVM_INCLUDE_DIRS})
 target_compile_options(test_bvm PUBLIC ${BVM_CFLAGS_OTHER})
@@ -71,7 +72,7 @@ gtest_discover_tests(test_bvm)
 
 # Binary
 add_executable(bvm ${SOURCE_FILES} src/main.cc)
-set_property(TARGET bvm PROPERTY CXX_STANDARD 17)
+set_property(TARGET bvm PROPERTY CXX_STANDARD 20)
 target_link_libraries(bvm ${BVM_LIBRARIES})
 target_include_directories(bvm PUBLIC ${BVM_INCLUDE_DIRS})
 target_compile_options(bvm PUBLIC ${BVM_CFLAGS_OTHER})

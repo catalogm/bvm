@@ -155,14 +155,20 @@ SlotPtr BVM::unlockSlot(const std::string& passphrase) {
     auto slot = Slot::deserialize(slotn, passphrase, bootstrap->slots[slotn]);
     if (slot != nullptr) {
       // add extents to bitmap
+      size_t voln = 0;
       for (auto& vol : slot->volumes()) {
+        size_t overlap = 0;
         for (auto& extn : vol.extents) {
           if (!bitmap_.addChecked(extn)) {
-            // Handle this better
-            std::cerr << "Slot volume's bitmap overlaps another volume"
-                      << std::endl;
+            overlap++;
           }
         }
+        if (overlap > 0) {
+          // Handle this better
+          fmt::print(std::cerr, "Slot volume[{}] bitmap overlaps {} extents\n",
+                     voln, overlap);
+        }
+        voln++;
       }
       slots_[slotn] = slot;
       return slot;

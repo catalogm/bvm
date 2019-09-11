@@ -48,9 +48,13 @@ void bvm::from_json(const json& j, Layer& l) {
   j.at("key").get_to(l.key);
 }
 
-Layer& Volume::addLayer(std::string cipher, size_t key_size) {
+Layer::Layer(std::string c, size_t key_size) : cipher{c}, key{} {
   Botan::AutoSeeded_RNG rng;
-  layers.emplace_back(cipher, rng.random_vec(key_size));
+  key = rng.random_vec(key_size);
+}
+
+Layer& Volume::addLayer(std::string cipher, size_t key_size) {
+  layers.emplace_back(cipher, key_size);
   return layers.back();
 }
 

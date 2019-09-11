@@ -37,6 +37,7 @@ struct Layer {
   ~Layer() = default;
   Layer() : cipher{}, key{} {}
   Layer(std::string c, key_type k) : cipher{c}, key{k} {}
+  Layer(std::string c, size_t key_size);
 };
 
 struct Volume {

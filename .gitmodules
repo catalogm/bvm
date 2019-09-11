@@ -2,3 +2,6 @@
 	path = third_party/CRoaring
 	url = https://github.com/RoaringBitmap/CRoaring
 	branch = master
+[submodule "third_party/replxx"]
+	path = third_party/replxx
+	url = https://github.com/AmokHuginnsson/replxx
