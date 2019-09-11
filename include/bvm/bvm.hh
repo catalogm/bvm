@@ -69,8 +69,10 @@ class BVM {
   }
   uint64_t data_size() const noexcept { return size_ - bootstrap_size(); }
   const fs::path& path() const noexcept { return path_; }
-  size_t slots_size() const noexcept { return slots_.size(); }
+
   slots_type slots() const noexcept { return slots_; }
+  size_t slots_total() const noexcept { return MAX_SLOTS; }
+  size_t slots_used() const noexcept { return slots_.size(); }
 
   constexpr uint64_t extent_size() const noexcept { return EXTENT_SIZE; }
   uint64_t extents_total() const { return data_size() / extent_size(); }

@@ -5,6 +5,7 @@
 #include <botan/auto_rng.h>
 #include <algorithm>
 #include <exception>
+#include <iostream>
 #include <iterator>
 #include <sstream>
 #include <type_traits>
@@ -124,13 +125,17 @@ SlotPtr BVM::createSlot(const salt_type& salt, const key_type& key,
 }
 
 void BVM::closeSlot(uint8_t slotn) {
-  auto slot = slots_.at(slotn);
-  for (auto& vol : slot->volumes()) {
-    for (auto& extn : vol.extents) {
-      bitmap_.remove(extn);
+  slots_.erase(slotn);
+
+  // re-calculate bitmap
+  bitmap_.clear();
+  for (const auto& [key, slot] : slots_) {
+    for (const auto& vol : slot->volumes()) {
+      for (const auto& extn : vol.extents) {
+        bitmap_.add(extn);
+      }
     }
   }
-  slots_.erase(slotn);
 }
 
 SlotPtr BVM::unlockSlot(const std::string& passphrase) {
@@ -153,7 +158,9 @@ SlotPtr BVM::unlockSlot(const std::string& passphrase) {
       for (auto& vol : slot->volumes()) {
         for (auto& extn : vol.extents) {
           if (!bitmap_.addChecked(extn)) {
-            throw std::runtime_error("Bitmap for slot already exists");
+            // Handle this better
+            std::cerr << "Slot volume's bitmap overlaps another volume"
+                      << std::endl;
           }
         }
       }

@@ -62,16 +62,16 @@ fs::path BVMSlotCreate::fname = "";
 TEST_F(BVMSlotCreate, MaxSlots) {
   BVMPtr vm = std::make_shared<BVM>(fname);
   ASSERT_NE(vm, nullptr);
-  ASSERT_EQ(vm->slots_size(), 0);
+  ASSERT_EQ(vm->slots_used(), 0);
 
   std::string passphrase = "hello wurl";
   for (size_t i = 0; i < BVM::MAX_SLOTS; i++) {
     auto slot = vm->createSlot(passphrase);
     auto slotn = slot->slotn();
     ASSERT_LT(slotn, BVM::MAX_SLOTS);
-    ASSERT_EQ(vm->slots_size(), i + 1);
+    ASSERT_EQ(vm->slots_used(), i + 1);
   }
-  ASSERT_EQ(vm->slots_size(), BVM::MAX_SLOTS);
+  ASSERT_EQ(vm->slots_used(), BVM::MAX_SLOTS);
 
   ASSERT_THROW({ vm->createSlot(passphrase); }, std::runtime_error);
   ASSERT_THROW({ vm->createSlot(""); }, std::runtime_error);
@@ -80,7 +80,7 @@ TEST_F(BVMSlotCreate, MaxSlots) {
 TEST_F(BVMSlotCreate, CreateAndWrite) {
   BVMPtr vm = std::make_shared<BVM>(fname);
   ASSERT_NE(vm, nullptr);
-  ASSERT_EQ(vm->slots_size(), 0);
+  ASSERT_EQ(vm->slots_used(), 0);
 
   ASSERT_EQ(sizeof(bvm::KeySlotPayload), 1048992);
   ASSERT_EQ(sizeof(bvm::KeySlotPayload) % 16, 0);
@@ -90,7 +90,7 @@ TEST_F(BVMSlotCreate, CreateAndWrite) {
   auto slot = vm->createSlot(passphrase);
   auto slotn = slot->slotn();
   ASSERT_LT(slotn, BVM::MAX_SLOTS);
-  ASSERT_EQ(vm->slots_size(), 1);
+  ASSERT_EQ(vm->slots_used(), 1);
 
   // write slot
   ASSERT_TRUE(vm->writeSlot(slotn));
@@ -117,7 +117,7 @@ TEST_F(BVMSlotCreate, CreateAndWrite) {
 TEST_F(BVMSlotCreate, UnlockSlot) {
   BVMPtr vm = std::make_shared<BVM>(fname);
   ASSERT_NE(vm, nullptr);
-  ASSERT_EQ(vm->slots_size(), 0);
+  ASSERT_EQ(vm->slots_used(), 0);
 
   // test sizes
   ASSERT_EQ(vm->size(), size);
@@ -132,7 +132,7 @@ TEST_F(BVMSlotCreate, UnlockSlot) {
   auto slot = vm->createSlot(passphrase);
   auto slotn = slot->slotn();
   ASSERT_LT(slotn, BVM::MAX_SLOTS);
-  ASSERT_EQ(vm->slots_size(), 1);
+  ASSERT_EQ(vm->slots_used(), 1);
 
   // add volume
   Botan::AutoSeeded_RNG rng;
@@ -158,9 +158,9 @@ TEST_F(BVMSlotCreate, UnlockSlot) {
   ASSERT_EQ(vm->unlockSlot(passphrase), nullptr);
 
   // close slot
-  ASSERT_EQ(vm->slots_size(), 1);
+  ASSERT_EQ(vm->slots_used(), 1);
   vm->closeSlot(slotn);
-  ASSERT_EQ(vm->slots_size(), 0);
+  ASSERT_EQ(vm->slots_used(), 0);
   ASSERT_EQ(vm->extents_free(), vm->extents_total());
   ASSERT_EQ(vm->extents_used(), 0);
 
@@ -169,19 +169,19 @@ TEST_F(BVMSlotCreate, UnlockSlot) {
     auto us = vm->unlockSlot(slot->key());
     ASSERT_NE(us, nullptr);
     ASSERT_EQ(slotn, us->slotn());
-    ASSERT_EQ(vm->slots_size(), 1);
+    ASSERT_EQ(vm->slots_used(), 1);
   }
 
   // close slot
   vm->closeSlot(slotn);
-  ASSERT_EQ(vm->slots_size(), 0);
+  ASSERT_EQ(vm->slots_used(), 0);
   ASSERT_EQ(vm->extents_used(), 0);
 
   // unlock slot
   auto us = vm->unlockSlot(passphrase);
   ASSERT_NE(us, nullptr);
   ASSERT_EQ(slotn, us->slotn());
-  ASSERT_EQ(vm->slots_size(), 1);
+  ASSERT_EQ(vm->slots_used(), 1);
 
   // check volumes
   ASSERT_EQ(vm->extents_free(), vm->extents_total() - 1);
