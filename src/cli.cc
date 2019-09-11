@@ -211,8 +211,15 @@ inline void register_shell_command(CLI::App& app) {
   auto opts = std::make_shared<Options>();
 
   sub->add_option("path", opts->path, "book volume path")
-      ->check(CLI::ExistingFile)
-      ->required();
+      ->required()
+      ->check([](const std::string& path) -> std::string {
+        if (!fs::exists(path)) {
+          return fmt::format("{} does not exists", path);
+        } else if (!fs::is_block_file(path)) {
+          return fmt::format("{} is not a block device", path);
+        }
+        return std::string();
+      });
 
   sub->callback([opts]() {
     auto log = spdlog::get("bvm.cli");
@@ -569,7 +576,10 @@ inline void register_shell_command(CLI::App& app) {
         for (auto& extn : extents) {
           // offset within original file
           auto offset =
-              bvm.bootstrap_size() + ((extn * vol.extent_size) / sector_size);
+              (bvm.bootstrap_size() + (extn * vol.extent_size)) / sector_size;
+          fmt::print("extn: {}\n", extn);
+          fmt::print("vol.extent_size: {}\n", vol.extent_size);
+          fmt::print("bootstrap_size: {}\n", bvm.bootstrap_size());
 
           // create table
           auto target_args = fmt::format(
@@ -624,7 +634,28 @@ inline void register_shell_command(CLI::App& app) {
         dm_task* dmt{nullptr};
         if (!(dmt = dm_task_create(DM_DEVICE_REMOVE))) {
           fmt::print("Failed on task create\n");
-          continue;
+        } else if (!dm_task_set_name(dmt, dev_name.c_str())) {
+          fmt::print("Failed to set task name\n");
+        } else if (!dm_task_enable_checks(dmt)) {
+          fmt::print("Failed to enable checks\n");
+        } else if (!dm_task_run(dmt)) {
+          fmt::print("Failed on task run\n");
+        }
+        dm_task_destroy(dmt);
+        dmt = nullptr;
+      } else if (input == "test") {
+        fmt::print("testing\n");
+        auto bootstrap = bvm.readBootstrap();
+        const uint8_t* ptr = reinterpret_cast<const uint8_t*>(bootstrap.get());
+        constexpr size_t size = sizeof(*bootstrap);
+        std::vector<uint8_t> data(ptr, ptr + size);
+        std::string s = "hello";
+        bool found = std::search(data.begin(), data.end(), s.begin(),
+                                 s.end()) != data.end();
+        if (found) {
+          fmt::print("{} found in bootstrap\n", s);
+        } else {
+          fmt::print("{} not found in bootstrap\n", s);
         }
       }
     }
