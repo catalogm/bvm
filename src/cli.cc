@@ -6,7 +6,6 @@
 
 #include <botan/hex.h>
 #include <botan/pwdhash.h>
-#include <libdevmapper.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <termios.h>
@@ -31,6 +30,7 @@
 
 #include "bvm/bvm.hh"
 #include "bvm/cli.hh"
+#include "bvm/devicemapper.hh"
 #include "replxx.hxx"
 
 #if !(defined(BVM_VERSION_MAJOR) && defined(BVM_VERSION_MINOR) && \
@@ -41,6 +41,7 @@
 using namespace fmt::literals;
 namespace fs = std::filesystem;
 using bvm::BVM;
+using bvm::DeviceMapper;
 using bvm::Layer;
 using replxx::Replxx;
 
@@ -364,14 +365,23 @@ inline void register_shell_command(CLI::App& app) {
             fmt::print("\n");
           }
 
-          Table<uint8_t, size_t, std::string, size_t, size_t> tbl(
-              {"Slot", "Vol #", "Name", "Layers", "Size(gb)"});
+          Table<uint8_t, size_t, std::string, size_t, std::string> tbl(
+              {"Slot", "Vol", "Name", "Size(gb)", "Layers"});
           for (const auto& [slotn, slot] : bvm.slots()) {
             const auto& vols = slot->volumes();
             for (size_t i = 0; i < vols.size(); i++) {
               const auto& v = vols[i];
-              tbl.addRow(slotn, i, "", v.layers.size(),
-                         v.extent_size * v.extents.size() / gb);
+              std::string layers;
+              for (const auto& l : v.layers) {
+                if (layers.empty()) {
+                  layers = fmt::format("{}/{}", l.cipher, l.key.size());
+                  continue;
+                }
+                layers =
+                    fmt::format("{} {}/{}", layers, l.cipher, l.key.size() * 8);
+              }
+              tbl.addRow(slotn, i, "", v.extent_size * v.extents.size() / gb,
+                         fmt::format("({}) {}", v.layers.size(), layers));
             }
           }
           tbl.print();
@@ -445,25 +455,26 @@ inline void register_shell_command(CLI::App& app) {
             continue;
           }
           for (std::sregex_iterator i = re_begin; i != re_end; ++i) {
-            std::smatch match = *i;
-            log->debug("matches size = {}", match.size());
-            for (size_t j = 0; j < match.size(); j++) {
-              log->debug("  match[{}] = {}", j, match[j]);
+            std::smatch algm = *i;
+            log->debug("matches size = {}", algm.size());
+            for (size_t j = 0; j < algm.size(); j++) {
+              log->debug("  match[{}] = {}", j, algm[j]);
             }
-            layers.emplace_back(match[1].str(), std::stoll(matches[2].str()));
+            layers.emplace_back(algm[1].str(), std::stoull(algm[2].str()) / 8);
           }
-          fmt::print("layers size: {}\n", layers.size());
+          log->debug("layers size: {}\n", layers.size());
         }
 
         if (layers.size() == 0) {
-          layers.emplace_back("aes-xts-essiv:sha256", 512);
+          layers.emplace_back("aes-xts-essiv:sha256", 512 / 8);
         }
         bvm.addVolume(slotn, extents, layers);
         dirtySlots[slotn] = true;
         fmt::print("Volume created with {} extents and {} layers\n", extents,
                    layers.size());
-      } else if (input.starts_with("remove-volume")) {
-        const std::regex reg(R"(^(?:remove-volume)\s*([0-7])\s*(\d+)\s*$)");
+      } else if (input.starts_with("remove-volume") ||
+                 input.starts_with("rmv")) {
+        const std::regex reg(R"(^(?:remove-volume|rmv)\s*([0-7])\s*(\d+)\s*$)");
         std::smatch matches;
         if (!std::regex_match(input, matches, reg)) {
           fmt::print("usage: remove-volume <slot> <volume number>\n");
@@ -543,27 +554,10 @@ inline void register_shell_command(CLI::App& app) {
 
         fmt::print("1. Creating linear device\n");
         dm_log_init_verbose(2);
-        dm_task* dmt{nullptr};
-        if (!(dmt = dm_task_create(DM_DEVICE_CREATE))) {
-          fmt::print("Failed to create device mapper task\n");
-          continue;
-        }
-
-        if (!dm_task_enable_checks(dmt)) {
-          fmt::print("Failed to enable checks\n");
-          dm_task_destroy(dmt);
-          continue;
-        }
 
         auto name = matches[3].str();
         std::string dev_name = fmt::format("bvm_linear_{}", name);
-        if (!dm_task_set_name(dmt, dev_name.c_str())) {
-          fmt::print("Failed to set dev name to {}\n", dev_name);
-          dm_task_destroy(dmt);
-          continue;
-        }
 
-        // create linear target
         // device mapper sector size, 512 bytes
         static constexpr size_t sector_size = 512;
         static_assert((BVM::EXTENT_SIZE % sector_size) == 0,
@@ -572,53 +566,64 @@ inline void register_shell_command(CLI::App& app) {
         const auto& extents = vol.extents;
         auto sectors = vol.extent_size / sector_size;
         size_t start = 0;
-        bool error = false;
-        for (auto& extn : extents) {
-          // offset within original file
-          auto offset =
-              (bvm.bootstrap_size() + (extn * vol.extent_size)) / sector_size;
-          fmt::print("extn: {}\n", extn);
-          fmt::print("vol.extent_size: {}\n", vol.extent_size);
-          fmt::print("bootstrap_size: {}\n", bvm.bootstrap_size());
 
-          // create table
-          auto target_args = fmt::format(
-              "{path} {offset}", "path"_a = fs::absolute(bvm.path()).string(),
-              "offset"_a = offset);
-          fmt::print("start = {}, sectors = {}\n", start, sectors);
-          fmt::print("target args = {}\n", target_args);
-          fmt::print("path = {path}, abs = {abs}\n", "path"_a = bvm.path(),
-                     "abs"_a = fs::absolute(bvm.path()));
-          if (!dm_task_add_target(dmt, start, sectors, "linear",
-                                  target_args.c_str())) {
-            error = true;
-            fmt::print("Failed adding linear target\n");
-            fmt::print("start={}, sectors={}, type=linear, args='{}'\n", start,
-                       sectors, target_args);
+        // create linear target
+        std::shared_ptr<dm_info> dmi{nullptr};
+        {
+          DeviceMapper::targets_type targets;
+          for (auto& extn : extents) {
+            // offset within original file
+            auto offset =
+                (bvm.bootstrap_size() / sector_size) + (extn * sectors);
+
+            // create table
+            auto target_args = fmt::format(
+                "{path} {offset}", "path"_a = fs::absolute(bvm.path()).string(),
+                "offset"_a = offset);
+            targets.emplace_back(start, sectors, "linear", target_args);
+            start += sectors;
+          }
+          try {
+            dmi = DeviceMapper::create(dev_name, targets);
+            log->debug("Created linear target: {}", dev_name);
+          } catch (const std::exception& e) {
+            fmt::print("Failed to create linear {} layer for {}\n", dev_name,
+                       name);
+            continue;
+          }
+        }
+
+        // create layers
+        const auto& layers = vol.layers;
+        auto total_sectors = start;
+        auto last = layers.cend() - 1;
+        auto count = 1;
+        for (auto it = layers.cbegin(); it != layers.cend(); it++) {
+          auto prev_dev_path = fmt::format("{}:{}", dmi->major, dmi->minor);
+          if (it != last) {
+            dev_name = fmt::format("bvm_crypt_{}_{}", name, count);
+            count++;
+          } else {
+            // last encryption as final table
+            dev_name = name;
+          }
+          DeviceMapper::targets_type targets;
+          auto args = fmt::format(
+              "{cipher} {key} 0 {dev} 0", "cipher"_a = (*it).cipher,
+              "key"_a = Botan::hex_encode((*it).key), "dev"_a = prev_dev_path);
+          targets.emplace_back(0, total_sectors, "crypt", args);
+          try {
+            dmi = DeviceMapper::create(dev_name, targets);
+            fmt::print("Created crypt target from {} to {}\n", prev_dev_path,
+                       dev_name);
+          } catch (const std::exception& e) {
+            log->debug("table: {} {} {} {}\n", 0, total_sectors, "crypt", args);
+            fmt::print("Failed to create crypt target from {} to {}\n",
+                       prev_dev_path, dev_name);
             break;
           }
-          start += sectors;
-        }
-        if (error) {
-          fmt::print("Failed adding linear target\n");
-          dm_task_destroy(dmt);
-          continue;
         }
 
-        uint32_t cookie = 0;
-        uint16_t udev_flags = 0;
-        if (!dm_task_set_cookie(dmt, &cookie, udev_flags)) {
-          fmt::print("Failed on set cookie\n");
-          continue;
-        }
-        if (!dm_task_run(dmt)) {
-          fmt::print("Failed on task run\n");
-          dm_task_destroy(dmt);
-          continue;
-        }
-
-        dm_task_destroy(dmt);
-        dmt = nullptr;
       } else if (input.starts_with("rmnode")) {
         const std::regex reg(R"(^(?:rmnode) (\w+)\s*$)");
         std::smatch matches;
@@ -631,18 +636,12 @@ inline void register_shell_command(CLI::App& app) {
 
         auto name = matches[1].str();
         std::string dev_name = fmt::format("bvm_linear_{}", name);
-        dm_task* dmt{nullptr};
-        if (!(dmt = dm_task_create(DM_DEVICE_REMOVE))) {
-          fmt::print("Failed on task create\n");
-        } else if (!dm_task_set_name(dmt, dev_name.c_str())) {
-          fmt::print("Failed to set task name\n");
-        } else if (!dm_task_enable_checks(dmt)) {
-          fmt::print("Failed to enable checks\n");
-        } else if (!dm_task_run(dmt)) {
-          fmt::print("Failed on task run\n");
+        try {
+          DeviceMapper::remove(dev_name);
+          fmt::print("Device {} removed\n", dev_name);
+        } catch (const std::runtime_error& e) {
+          fmt::print("{}", e.what());
         }
-        dm_task_destroy(dmt);
-        dmt = nullptr;
       } else if (input == "test") {
         fmt::print("testing\n");
         auto bootstrap = bvm.readBootstrap();
