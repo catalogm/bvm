@@ -16,6 +16,8 @@ Oh... and also follow the LICENSE in the repo (pretty please).
 
 # ToDo
 
+- [ ] Document on disk format
+- [ ] Documet wtf this actually is
 - [ ] Test devicemapper loading of data
 - [ ] Test fuse loading of data
 - [ ] Implement bvm executable
